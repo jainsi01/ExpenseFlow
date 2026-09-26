@@ -2,21 +2,43 @@ const pool = require('../config/db');
 
 const incomeCategories = ['Salary', 'Freelance', 'Business', 'Investment', 'Gift', 'Other'];
 const expenseCategories = ['Food', 'Shopping', 'Transport', 'Entertainment', 'Bills', 'Health', 'Education', 'Travel', 'Other'];
+
+function normalizeDate(value) {
+  if (typeof value !== 'string') return '';
+  const str = value.trim();
+  // YYYY-MM-DD or YYYY/MM/DD
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(str)) {
+    const parts = str.split(/[-/]/);
+    return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+  }
+  // DD-MM-YYYY or DD/MM/YYYY
+  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(str)) {
+    const parts = str.split(/[-/]/);
+    return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+  }
+  return str;
+}
+
 const validDate = value => {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  const norm = normalizeDate(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(norm)) return false;
+  const date = new Date(`${norm}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === norm;
 };
 
 function validate(body) {
-  const { type, title, amount, category, transaction_date } = body;
+  const { type, title, amount, category } = body;
+  body.transaction_date = normalizeDate(body.transaction_date);
+
   if (!['income', 'expense'].includes(type)) return 'Choose income or expense.';
   if (typeof title !== 'string' || !title.trim() || title.trim().length > 150) return 'Enter a title (up to 150 characters).';
   if (amount === '' || amount === null || !Number.isFinite(Number(amount)) || Number(amount) <= 0 || Number(amount) > 99999999.99) return 'Amount must be greater than 0.';
+
   const allowed = type === 'income' ? incomeCategories : expenseCategories;
   if (!allowed.includes(category)) return 'Choose a valid category for this transaction type.';
-  if (!validDate(transaction_date)) return 'Enter a valid transaction date.';
+  if (!validDate(body.transaction_date)) return 'Enter a valid transaction date.';
   if (body.description != null && (typeof body.description !== 'string' || body.description.length > 2000)) return 'Description must be 2,000 characters or fewer.';
+
   return null;
 }
 
@@ -25,8 +47,15 @@ function buildFilters(query) {
   if (query.type && ['income', 'expense'].includes(query.type)) { clauses.push('type = ?'); values.push(query.type); }
   if (query.category) { clauses.push('category = ?'); values.push(query.category); }
   if (query.search) { clauses.push('(title LIKE ? OR description LIKE ?)'); values.push(`%${query.search}%`, `%${query.search}%`); }
-  if (query.startDate && validDate(query.startDate)) { clauses.push('transaction_date >= ?'); values.push(query.startDate); }
-  if (query.endDate && validDate(query.endDate)) { clauses.push('transaction_date <= ?'); values.push(query.endDate); }
+
+  if (query.startDate && validDate(query.startDate)) {
+    clauses.push('transaction_date >= ?');
+    values.push(normalizeDate(query.startDate));
+  }
+  if (query.endDate && validDate(query.endDate)) {
+    clauses.push('transaction_date <= ?');
+    values.push(normalizeDate(query.endDate));
+  }
   return { where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', values };
 }
 
@@ -51,7 +80,10 @@ exports.create = async (req, res, next) => {
   if (error) return res.status(400).json({ error });
   try {
     const { type, title, amount, category, transaction_date, description = '' } = req.body;
-    const [result] = await pool.execute('INSERT INTO transactions (type, title, amount, category, transaction_date, description) VALUES (?, ?, ?, ?, ?, ?)', [type, title.trim(), Number(amount), category, transaction_date, description.trim()]);
+    const [result] = await pool.execute(
+      'INSERT INTO transactions (type, title, amount, category, transaction_date, description) VALUES (?, ?, ?, ?, ?, ?)',
+      [type, title.trim(), Number(amount), category, transaction_date, description.trim()]
+    );
     const [rows] = await pool.execute("SELECT id, type, title, amount, category, DATE_FORMAT(transaction_date, '%Y-%m-%d') AS transaction_date, description FROM transactions WHERE id = ?", [result.insertId]);
     res.status(201).json(rows[0]);
   } catch (err) { next(err); }
@@ -62,7 +94,10 @@ exports.update = async (req, res, next) => {
   if (error) return res.status(400).json({ error });
   try {
     const { type, title, amount, category, transaction_date, description = '' } = req.body;
-    const [result] = await pool.execute('UPDATE transactions SET type = ?, title = ?, amount = ?, category = ?, transaction_date = ?, description = ? WHERE id = ?', [type, title.trim(), Number(amount), category, transaction_date, description.trim(), req.params.id]);
+    const [result] = await pool.execute(
+      'UPDATE transactions SET type = ?, title = ?, amount = ?, category = ?, transaction_date = ?, description = ? WHERE id = ?',
+      [type, title.trim(), Number(amount), category, transaction_date, description.trim(), req.params.id]
+    );
     if (!result.affectedRows) return res.status(404).json({ error: 'Transaction not found.' });
     const [rows] = await pool.execute("SELECT id, type, title, amount, category, DATE_FORMAT(transaction_date, '%Y-%m-%d') AS transaction_date, description FROM transactions WHERE id = ?", [req.params.id]);
     res.json(rows[0]);

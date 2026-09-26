@@ -1,3 +1,7 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env'), override: true });
+require('dotenv').config({ path: path.join(__dirname, '../../.env'), override: true });
+
 const mysql = require('mysql2/promise');
 
 const pool = mysql.createPool({

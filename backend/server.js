@@ -1,6 +1,6 @@
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
-require('dotenv').config(); // Fallback to root .env if present
+require('dotenv').config({ path: path.join(__dirname, '.env'), override: true });
+require('dotenv').config({ override: true });
 
 const express = require('express');
 const cors = require('cors');
@@ -39,14 +39,13 @@ app.use((err, _req, res, _next) => {
   console.error('Request error:', databaseUnavailable ? `Database error (${err.code})` : err.message);
   
   if (databaseUnavailable) {
-    return res.status(503).json({ error: 'ExpenseFlow cannot connect to MySQL. Verify backend/.env configuration and restart the server.' });
+    return res.status(503).json({ error: 'ExpenseFlow cannot connect to MySQL. Verify your environment variables and database host.' });
   }
   res.status(500).json({ error: 'An unexpected server error occurred.' });
 });
 
 async function initDB() {
   try {
-    // Ensure table exists
     await pool.query(`
       CREATE TABLE IF NOT EXISTS transactions (
           id INT PRIMARY KEY AUTO_INCREMENT,
@@ -63,7 +62,6 @@ async function initDB() {
       );
     `);
 
-    // Seed data if empty
     const [[{ count }]] = await pool.query('SELECT COUNT(*) AS count FROM transactions');
     if (count === 0) {
       console.log('Seeding initial sample transactions into MySQL...');
@@ -78,14 +76,19 @@ async function initDB() {
       `);
       console.log('Seed data inserted successfully.');
     }
-    console.log('MySQL connection & schema ready.');
   } catch (error) {
-    console.error('Database initialization error:', error.message);
+    console.error('Database initialization warning:', error.message);
   }
 }
 
 const port = process.env.PORT || 5000;
-app.listen(port, async () => {
-  console.log(`ExpenseFlow server is running at http://localhost:${port}`);
-  await initDB();
-});
+
+if (require.main === module) {
+  app.listen(port, async () => {
+    console.log(`ExpenseFlow server is running at http://localhost:${port}`);
+    await initDB();
+  });
+}
+
+// Export for serverless environments (Vercel)
+module.exports = app;
